@@ -161,6 +161,23 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Per-group .claude.json state file (Claude Code writes session state here).
+  // Must be writable, but /home/node is mounted read-only for credentials.
+  const groupClaudeJson = path.join(
+    DATA_DIR,
+    'sessions',
+    group.folder,
+    '.claude.json',
+  );
+  if (!fs.existsSync(groupClaudeJson)) {
+    fs.writeFileSync(groupClaudeJson, '{}');
+  }
+  mounts.push({
+    hostPath: groupClaudeJson,
+    containerPath: '/home/node/.claude.json',
+    readonly: false,
+  });
+
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
@@ -197,6 +214,17 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Mount host home directory (read-only) so agents inherit credentials
+  // (gh, git config, ssh keys, etc.) without being able to modify them
+  const hostHome = process.env.HOME;
+  if (hostHome && fs.existsSync(hostHome)) {
+    mounts.push({
+      hostPath: hostHome,
+      containerPath: '/home/node',
+      readonly: true,
+    });
+  }
+
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
@@ -211,16 +239,45 @@ function buildVolumeMounts(
 }
 
 /**
+ * Read the OAuth token from Claude Code's credentials file.
+ * This file is auto-refreshed by `claude auth login`, so we always
+ * get the latest token without manual .env updates.
+ */
+function readClaudeOAuthToken(): string | undefined {
+  const credFile = path.join(
+    process.env.HOME || '',
+    '.claude',
+    '.credentials.json',
+  );
+  try {
+    const data = JSON.parse(fs.readFileSync(credFile, 'utf-8'));
+    return data?.claudeAiOauth?.accessToken || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Read allowed secrets from .env for passing to the container via stdin.
  * Secrets are never written to disk or mounted as files.
+ * The OAuth token is read from Claude Code's credentials file first
+ * (auto-refreshed), falling back to .env if not available.
  */
 function readSecrets(): Record<string, string> {
-  return readEnvFile([
+  const secrets = readEnvFile([
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_API_KEY',
     'ANTHROPIC_BASE_URL',
     'ANTHROPIC_AUTH_TOKEN',
   ]);
+
+  // Prefer the auto-refreshed token from Claude Code's credentials
+  const liveToken = readClaudeOAuthToken();
+  if (liveToken) {
+    secrets.CLAUDE_CODE_OAUTH_TOKEN = liveToken;
+  }
+
+  return secrets;
 }
 
 function buildContainerArgs(
@@ -231,6 +288,12 @@ function buildContainerArgs(
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
+
+  // Pass model selection if configured
+  const claudeModel = process.env.CLAUDE_MODEL || readEnvFile(['CLAUDE_MODEL']).CLAUDE_MODEL;
+  if (claudeModel) {
+    args.push('-e', `CLAUDE_MODEL=${claudeModel}`);
+  }
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
