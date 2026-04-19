@@ -290,7 +290,8 @@ function buildContainerArgs(
   args.push('-e', `TZ=${TIMEZONE}`);
 
   // Pass model selection if configured
-  const claudeModel = process.env.CLAUDE_MODEL || readEnvFile(['CLAUDE_MODEL']).CLAUDE_MODEL;
+  const claudeModel =
+    process.env.CLAUDE_MODEL || readEnvFile(['CLAUDE_MODEL']).CLAUDE_MODEL;
   if (claudeModel) {
     args.push('-e', `CLAUDE_MODEL=${claudeModel}`);
   }
