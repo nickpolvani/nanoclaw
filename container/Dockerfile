@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     curl \
     git \
+    sudo \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
@@ -58,10 +59,24 @@ RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/
 # Create entrypoint script
 # Secrets are passed via stdin JSON — temp file is deleted immediately after Node reads it
 # Follow-up messages arrive via IPC files in /workspace/ipc/input/
-RUN printf '#!/bin/bash\nset -e\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+RUN printf '#!/bin/bash\nset -e\ngrep -q ":$(id -u):" /etc/passwd || echo "nanoclaw:x:$(id -u):$(id -g):NanoClaw:/home/node:/bin/bash" >> /etc/passwd\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
 RUN chown -R node:node /workspace && chmod 777 /home/node
+
+# Grant passwordless sudo so the non-root agent can install software and run
+# privileged CLI tools on demand. The container stays non-root (required for
+# the Claude SDK's bypass-permissions mode); sudo provides the root path.
+# /etc/passwd and /etc/group are made writable so the entrypoint can register
+# the runtime UID (the host UID is not in the image's passwd, and sudo refuses
+# to run for an unresolvable UID). The container is launched with an arbitrary
+# host UID:GID (not group 0), so group-writable is insufficient — these files
+# must be world-writable. Acceptable: sudo is already NOPASSWD-ALL, so passwd
+# writability is not the weakest link in this throwaway sandbox container.
+RUN printf 'Defaults !requiretty\nALL ALL=(ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/nanoclaw \
+    && chmod 0440 /etc/sudoers.d/nanoclaw \
+    && chmod 0666 /etc/passwd /etc/group \
+    && printf 'auth sufficient pam_permit.so\naccount sufficient pam_permit.so\nsession required pam_permit.so\n' > /etc/pam.d/sudo
 
 # Ensure HOME is always set (even when --user overrides to a UID not in /etc/passwd)
 ENV HOME=/home/node
