@@ -10,5 +10,8 @@
 // telegram
 import './telegram.js';
 
-// whatsapp
-import './whatsapp.js';
+// whatsapp — disabled (Telegram-only setup). The WhatsApp channel always
+// loads and calls process.exit() on a 401 logout, which crash-loops the
+// service under launchd KeepAlive. Re-enable by restoring this import and
+// re-authenticating via /add-whatsapp.
+// import './whatsapp.js';
