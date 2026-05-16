@@ -42,9 +42,17 @@ explicit non-root design, and broadens the escape surface more.
    - `Defaults !requiretty`
    - `ALL ALL=(ALL) NOPASSWD: ALL`
    - `chmod 0440` the file.
-3. `chmod g=u /etc/passwd /etc/group` — make them group-writable so the
-   entrypoint (running as the mapped non-root UID, which is in group 0) can
-   append a passwd entry at runtime.
+   - Replace `/etc/pam.d/sudo` with a permissive stack
+     (`pam_permit.so` for auth/account/session). The runtime-added passwd
+     entry has no `/etc/shadow` match, so the default PAM unix stack rejects
+     it ("account validation failure"). Since sudoers already grants
+     unconditional NOPASSWD-ALL root, a permissive PAM stack is consistent
+     and removes the shadow dependency.
+3. `chmod 0666 /etc/passwd /etc/group` — the container runs with an
+   arbitrary host UID:GID (gid 20, not group 0), so group-writable is
+   insufficient; world-writable lets the entrypoint append a passwd entry
+   at runtime. Acceptable since sudo is already NOPASSWD-ALL in this
+   throwaway sandbox container.
 
 ### Entrypoint (the `printf` heredoc at `Dockerfile:61`)
 
