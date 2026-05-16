@@ -74,16 +74,15 @@ function buildVolumeMounts(
       readonly: true,
     });
 
-    // Shadow .env so the agent cannot read secrets from the mounted project root.
-    // Secrets are passed via stdin instead (see readSecrets()).
-    const envFile = path.join(projectRoot, '.env');
-    if (fs.existsSync(envFile)) {
-      mounts.push({
-        hostPath: '/dev/null',
-        containerPath: '/workspace/project/.env',
-        readonly: true,
-      });
-    }
+    // NOTE: The host-side `/dev/null` → .env shadow mount was removed.
+    // It only works on Docker Desktop (osxfs single-file mounts). Colima and
+    // Apple Container support directory bind-mounts only, so that mount makes
+    // `docker run` fail and the main container never starts. Secrets are
+    // passed via stdin and never read from .env by the container
+    // (see readSecrets()); the trade-off is that the main "Claudio" agent can
+    // read .env from the RO project mount (the Claude token it already
+    // receives via stdin, plus channel tokens). Accepted for this
+    // single-user, headless setup.
 
     // Main also gets its group folder as the working directory
     mounts.push({
