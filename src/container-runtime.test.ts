@@ -22,6 +22,12 @@ import {
   stopContainer,
   ensureContainerRuntimeRunning,
   cleanupOrphans,
+  containerExists,
+  isContainerRunning,
+  containerImageLabel,
+  imageId,
+  startContainerCmd,
+  removeContainerCmd,
 } from './container-runtime.js';
 import { logger } from './logger.js';
 
@@ -144,6 +150,76 @@ describe('cleanupOrphans', () => {
     expect(logger.info).toHaveBeenCalledWith(
       { count: 2, names: ['nanoclaw-a-1', 'nanoclaw-b-2'] },
       'Stopped orphaned containers',
+    );
+  });
+});
+
+describe('startContainerCmd / removeContainerCmd', () => {
+  it('build start and rm commands', () => {
+    expect(startContainerCmd('nanoclaw-grp-x')).toBe(
+      `${CONTAINER_RUNTIME_BIN} start nanoclaw-grp-x`,
+    );
+    expect(removeContainerCmd('nanoclaw-grp-x')).toBe(
+      `${CONTAINER_RUNTIME_BIN} rm -f nanoclaw-grp-x`,
+    );
+  });
+});
+
+describe('containerExists', () => {
+  it('true when inspect succeeds', () => {
+    mockExecSync.mockReturnValueOnce('');
+    expect(containerExists('nanoclaw-grp-x')).toBe(true);
+    expect(mockExecSync).toHaveBeenCalledWith(
+      `${CONTAINER_RUNTIME_BIN} inspect nanoclaw-grp-x`,
+      { stdio: 'pipe' },
+    );
+  });
+  it('false when inspect throws', () => {
+    mockExecSync.mockImplementationOnce(() => {
+      throw new Error('No such object');
+    });
+    expect(containerExists('nanoclaw-grp-x')).toBe(false);
+  });
+});
+
+describe('isContainerRunning', () => {
+  it('true when state is running', () => {
+    mockExecSync.mockReturnValueOnce('true\n');
+    expect(isContainerRunning('nanoclaw-grp-x')).toBe(true);
+  });
+  it('false when state is not running', () => {
+    mockExecSync.mockReturnValueOnce('false\n');
+    expect(isContainerRunning('nanoclaw-grp-x')).toBe(false);
+  });
+  it('false when inspect throws', () => {
+    mockExecSync.mockImplementationOnce(() => {
+      throw new Error('No such object');
+    });
+    expect(isContainerRunning('nanoclaw-grp-x')).toBe(false);
+  });
+});
+
+describe('containerImageLabel / imageId', () => {
+  it('reads the nanoclaw.image label', () => {
+    mockExecSync.mockReturnValueOnce('sha256:abc\n');
+    expect(containerImageLabel('nanoclaw-grp-x')).toBe('sha256:abc');
+    expect(mockExecSync).toHaveBeenCalledWith(
+      `${CONTAINER_RUNTIME_BIN} inspect -f '{{ index .Config.Labels "nanoclaw.image" }}' nanoclaw-grp-x`,
+      { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
+    );
+  });
+  it('returns null when label missing/throws', () => {
+    mockExecSync.mockImplementationOnce(() => {
+      throw new Error('no such container');
+    });
+    expect(containerImageLabel('nanoclaw-grp-x')).toBeNull();
+  });
+  it('resolves an image id', () => {
+    mockExecSync.mockReturnValueOnce('sha256:def\n');
+    expect(imageId('nanoclaw-agent:latest')).toBe('sha256:def');
+    expect(mockExecSync).toHaveBeenCalledWith(
+      `${CONTAINER_RUNTIME_BIN} inspect -f '{{.Id}}' nanoclaw-agent:latest`,
+      { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
     );
   });
 });
