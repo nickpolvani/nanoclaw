@@ -2,7 +2,7 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, exec, spawn } from 'child_process';
+import { ChildProcess, exec, execSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -22,6 +22,12 @@ import {
   CONTAINER_RUNTIME_BIN,
   readonlyMountArgs,
   stopContainer,
+  containerExists,
+  isContainerRunning,
+  containerImageLabel,
+  imageId,
+  startContainerCmd,
+  removeContainerCmd,
 } from './container-runtime.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
@@ -279,11 +285,8 @@ function readSecrets(): Record<string, string> {
   return secrets;
 }
 
-function buildContainerArgs(
-  mounts: VolumeMount[],
-  containerName: string,
-): string[] {
-  const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+function buildCommonArgs(mounts: VolumeMount[]): string[] {
+  const args: string[] = [];
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
@@ -313,9 +316,60 @@ function buildContainerArgs(
     }
   }
 
-  args.push(CONTAINER_IMAGE);
-
   return args;
+}
+
+function buildCreateArgs(
+  mounts: VolumeMount[],
+  containerName: string,
+  currentImageId: string,
+): string[] {
+  return [
+    'create',
+    '-i',
+    '--name',
+    containerName,
+    '--label',
+    `nanoclaw.image=${currentImageId}`,
+    ...buildCommonArgs(mounts),
+    CONTAINER_IMAGE,
+    'sleep',
+    'infinity',
+  ];
+}
+
+/**
+ * Ensure the group's persistent container exists, is on the current image,
+ * and is running. Recreates it if the base image changed. Returns nothing;
+ * throws only if create/start cannot be issued.
+ */
+function ensureGroupContainer(
+  mounts: VolumeMount[],
+  containerName: string,
+): void {
+  const currentImage = imageId(CONTAINER_IMAGE);
+
+  if (containerExists(containerName)) {
+    if (containerImageLabel(containerName) !== currentImage) {
+      logger.info(
+        { containerName },
+        'Base image changed — recreating persistent container',
+      );
+      execSync(removeContainerCmd(containerName), { stdio: 'pipe' });
+    }
+  }
+
+  if (!containerExists(containerName)) {
+    const createArgs = buildCreateArgs(mounts, containerName, currentImage);
+    logger.info({ containerName }, 'Creating persistent group container');
+    execSync(`${CONTAINER_RUNTIME_BIN} ${createArgs.join(' ')}`, {
+      stdio: 'pipe',
+    });
+  }
+
+  if (!isContainerRunning(containerName)) {
+    execSync(startContainerCmd(containerName), { stdio: 'pipe' });
+  }
 }
 
 export async function runContainerAgent(
@@ -331,8 +385,9 @@ export async function runContainerAgent(
 
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
-  const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerName = `nanoclaw-grp-${safeName}`;
+  ensureGroupContainer(mounts, containerName);
+  const containerArgs = ['exec', '-i', containerName, '/app/entrypoint.sh'];
 
   logger.debug(
     {
@@ -493,6 +548,10 @@ export async function runContainerAgent(
     container.on('close', (code) => {
       clearTimeout(timeout);
       const duration = Date.now() - startTime;
+
+      // Persistent container: the exec'd agent exited but `sleep infinity`
+      // keeps the container alive. Stop it (filesystem persists; never rm).
+      exec(stopContainer(containerName), { timeout: 15000 }, () => {});
 
       if (timedOut) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
