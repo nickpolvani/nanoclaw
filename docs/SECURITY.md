@@ -18,10 +18,11 @@ Agents execute in containers (lightweight Linux VMs), providing:
 - **Filesystem isolation** - Only explicitly mounted directories are visible
 - **Non-root execution** - Runs as unprivileged `node` user (uid 1000)
 - **Persistent per-group containers** - Each group reuses one long-lived
-  container (`nanoclaw-grp-<group>`), stopped between tasks and never
+  container (`nanoclaw-grp-<group>`, non-alphanumeric characters in the
+  folder name replaced with `-`), stopped between tasks and never
   auto-removed, so agent-installed software persists. **Trade-off:**
   filesystem changes and any side effects of a prompt-injected or
-  misbehaving agent persist and compound across that group's future tasks
+  misbehaving agent persist and accumulate across that group's future tasks
   (previously each task started clean). **Cross-group isolation is
   unchanged** — separate container and mounts per group; a group cannot
   see another group's container or files. Recovery: `make reset-container
