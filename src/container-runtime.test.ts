@@ -85,8 +85,6 @@ describe('ensureContainerRuntimeRunning', () => {
 // --- cleanupOrphans ---
 
 describe('cleanupOrphans', () => {
-  const PERSIST = /^nanoclaw-grp-/;
-
   it('stops (never removes) persistent grp containers and removes legacy ones', () => {
     // docker ps -a returns all nanoclaw containers
     mockExecSync.mockReturnValueOnce(
@@ -143,6 +141,11 @@ describe('cleanupOrphans', () => {
     });
     mockExecSync.mockReturnValue('');
     cleanupOrphans(); // must not throw
+    expect(mockExecSync).toHaveBeenCalledTimes(3); // ps + stop(grp-a throws) + rm -f(b-2)
+    expect(mockExecSync).toHaveBeenCalledWith(
+      `${CONTAINER_RUNTIME_BIN} rm -f nanoclaw-b-2`,
+      { stdio: 'pipe' },
+    );
     expect(logger.info).toHaveBeenCalled();
   });
 });

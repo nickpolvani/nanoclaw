@@ -152,10 +152,12 @@ export function cleanupOrphans(): void {
         /* already stopped / already gone */
       }
     }
-    logger.info(
-      { stopped, removed },
-      'Cleaned up containers (persistent stopped, legacy removed)',
-    );
+    if (stopped.length > 0 || removed.length > 0) {
+      logger.info(
+        { stopped, removed },
+        'Cleaned up containers (persistent stopped, legacy removed)',
+      );
+    }
   } catch (err) {
     logger.warn({ err }, 'Failed to clean up orphaned containers');
   }
