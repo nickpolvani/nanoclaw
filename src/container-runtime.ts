@@ -123,27 +123,39 @@ export function ensureContainerRuntimeRunning(): void {
   }
 }
 
-/** Kill orphaned NanoClaw containers from previous runs. */
+/**
+ * On startup: stop (never remove) persistent per-group containers so they
+ * resume clean, and force-remove legacy transient `nanoclaw-<group>-<ts>`
+ * leftovers from the pre-persistence model.
+ */
 export function cleanupOrphans(): void {
   try {
     const output = execSync(
-      `${CONTAINER_RUNTIME_BIN} ps --filter name=nanoclaw- --format '{{.Names}}'`,
+      `${CONTAINER_RUNTIME_BIN} ps -a --filter name=nanoclaw- --format '{{.Names}}'`,
       { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
     );
-    const orphans = output.trim().split('\n').filter(Boolean);
-    for (const name of orphans) {
+    const names = output.trim().split('\n').filter(Boolean);
+    if (names.length === 0) return;
+
+    const stopped: string[] = [];
+    const removed: string[] = [];
+    for (const name of names) {
       try {
-        execSync(stopContainer(name), { stdio: 'pipe' });
+        if (/^nanoclaw-grp-/.test(name)) {
+          execSync(stopContainer(name), { stdio: 'pipe' });
+          stopped.push(name);
+        } else {
+          execSync(removeContainerCmd(name), { stdio: 'pipe' });
+          removed.push(name);
+        }
       } catch {
-        /* already stopped */
+        /* already stopped / already gone */
       }
     }
-    if (orphans.length > 0) {
-      logger.info(
-        { count: orphans.length, names: orphans },
-        'Stopped orphaned containers',
-      );
-    }
+    logger.info(
+      { stopped, removed },
+      'Cleaned up containers (persistent stopped, legacy removed)',
+    );
   } catch (err) {
     logger.warn({ err }, 'Failed to clean up orphaned containers');
   }
