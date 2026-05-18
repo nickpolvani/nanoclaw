@@ -61,3 +61,13 @@ build: colima-up ## Rebuild dist + the agent container image
 
 truncate-logs: ## Truncate the (unrotated) NanoClaw logs
 	@: > $(LOG); : > $(PROJECT_DIR)/logs/nanoclaw.error.log; echo "logs truncated"
+
+reset-container: ## Wipe one group's persistent container (GROUP=<folder>)
+	@test -n "$(GROUP)" || (echo "Usage: make reset-container GROUP=<folder>" && exit 1)
+	@name="nanoclaw-grp-$$(echo '$(GROUP)' | tr -c 'a-zA-Z0-9-' '-' | sed 's/-*$$//')"; \
+		echo "Removing $$name"; docker rm -f "$$name" 2>/dev/null || true
+
+reset-all-containers: ## Wipe ALL persistent per-group containers
+	@names="$$(docker ps -a --filter name=nanoclaw-grp- --format '{{.Names}}')"; \
+		if [ -n "$$names" ]; then echo "$$names" | xargs -r docker rm -f; \
+		else echo "No persistent containers"; fi
