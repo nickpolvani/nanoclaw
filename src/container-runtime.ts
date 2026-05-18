@@ -71,12 +71,18 @@ export function containerImageLabel(name: string): string | null {
 
 /** Resolve an image reference to its content id (sha256:…). */
 export function imageId(image: string): string {
-  return execSync(
-    `${CONTAINER_RUNTIME_BIN} inspect -f '{{.Id}}' ${image}`,
-    { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
-  )
-    .toString()
-    .trim();
+  try {
+    return execSync(`${CONTAINER_RUNTIME_BIN} inspect -f '{{.Id}}' ${image}`, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      encoding: 'utf-8',
+    })
+      .toString()
+      .trim();
+  } catch {
+    throw new Error(
+      `Image '${image}' not found — run 'make build' to build the agent image first`,
+    );
+  }
 }
 
 /** Ensure the container runtime is running, starting it if needed. */

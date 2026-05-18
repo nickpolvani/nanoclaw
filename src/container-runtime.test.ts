@@ -186,6 +186,10 @@ describe('isContainerRunning', () => {
   it('true when state is running', () => {
     mockExecSync.mockReturnValueOnce('true\n');
     expect(isContainerRunning('nanoclaw-grp-x')).toBe(true);
+    expect(mockExecSync).toHaveBeenCalledWith(
+      `${CONTAINER_RUNTIME_BIN} inspect -f '{{.State.Running}}' nanoclaw-grp-x`,
+      { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
+    );
   });
   it('false when state is not running', () => {
     mockExecSync.mockReturnValueOnce('false\n');
@@ -214,12 +218,24 @@ describe('containerImageLabel / imageId', () => {
     });
     expect(containerImageLabel('nanoclaw-grp-x')).toBeNull();
   });
+  it('returns null when the label is blank', () => {
+    mockExecSync.mockReturnValueOnce('\n');
+    expect(containerImageLabel('nanoclaw-grp-x')).toBeNull();
+  });
   it('resolves an image id', () => {
     mockExecSync.mockReturnValueOnce('sha256:def\n');
     expect(imageId('nanoclaw-agent:latest')).toBe('sha256:def');
     expect(mockExecSync).toHaveBeenCalledWith(
       `${CONTAINER_RUNTIME_BIN} inspect -f '{{.Id}}' nanoclaw-agent:latest`,
       { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
+    );
+  });
+  it('throws a clear error when the image is missing', () => {
+    mockExecSync.mockImplementationOnce(() => {
+      throw new Error('No such image');
+    });
+    expect(() => imageId('nanoclaw-agent:latest')).toThrow(
+      "Image 'nanoclaw-agent:latest' not found",
     );
   });
 });
