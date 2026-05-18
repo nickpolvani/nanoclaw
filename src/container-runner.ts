@@ -349,17 +349,17 @@ function ensureGroupContainer(
 ): void {
   const currentImage = imageId(CONTAINER_IMAGE);
 
-  if (containerExists(containerName)) {
-    if (containerImageLabel(containerName) !== currentImage) {
-      logger.info(
-        { containerName },
-        'Base image changed — recreating persistent container',
-      );
-      execSync(removeContainerCmd(containerName), { stdio: 'pipe' });
-    }
+  let exists = containerExists(containerName);
+  if (exists && containerImageLabel(containerName) !== currentImage) {
+    logger.info(
+      { containerName },
+      'Base image changed — recreating persistent container',
+    );
+    execSync(removeContainerCmd(containerName), { stdio: 'pipe' });
+    exists = false;
   }
 
-  if (!containerExists(containerName)) {
+  if (!exists) {
     const createArgs = buildCreateArgs(mounts, containerName, currentImage);
     logger.info({ containerName }, 'Creating persistent group container');
     execSync(`${CONTAINER_RUNTIME_BIN} ${createArgs.join(' ')}`, {
@@ -551,7 +551,10 @@ export async function runContainerAgent(
 
       // Persistent container: the exec'd agent exited but `sleep infinity`
       // keeps the container alive. Stop it (filesystem persists; never rm).
-      exec(stopContainer(containerName), { timeout: 15000 }, () => {});
+      // killOnTimeout already issues a stop on the timeout path — don't double-stop.
+      if (!timedOut) {
+        exec(stopContainer(containerName), { timeout: 15000 }, () => {});
+      }
 
       if (timedOut) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');

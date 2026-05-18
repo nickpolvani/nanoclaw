@@ -99,6 +99,8 @@ vi.mock('child_process', async () => {
   };
 });
 
+import { spawn, exec } from 'child_process';
+
 import { runContainerAgent, ContainerOutput } from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
 
@@ -222,8 +224,6 @@ describe('container-runner timeout behavior', () => {
   });
 });
 
-import { spawn, exec } from 'child_process';
-
 describe('persistent per-group container', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -236,13 +236,19 @@ describe('persistent per-group container', () => {
   afterEach(() => vi.useRealTimers());
 
   it('uses a deterministic per-group container name and execs into it', async () => {
-    const p = runContainerAgent(testGroup, testInput, () => {}, vi.fn(async () => {}));
+    const p = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      vi.fn(async () => {}),
+    );
     await vi.advanceTimersByTimeAsync(10);
     emitOutputMarker(fakeProc, { status: 'success', result: null });
     fakeProc.emit('close', 0);
     await p;
 
-    const spawnCalls = (spawn as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const spawnCalls = (spawn as unknown as ReturnType<typeof vi.fn>).mock
+      .calls;
     const last = spawnCalls[spawnCalls.length - 1];
     expect(last[0]).toBe('docker');
     expect(last[1]).toEqual([
@@ -259,7 +265,12 @@ describe('persistent per-group container', () => {
     const execSyncMock = execSync as unknown as ReturnType<typeof vi.fn>;
     execSyncMock.mockClear();
 
-    const p = runContainerAgent(testGroup, testInput, () => {}, vi.fn(async () => {}));
+    const p = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      vi.fn(async () => {}),
+    );
     await vi.advanceTimersByTimeAsync(10);
     emitOutputMarker(fakeProc, { status: 'success', result: null });
     fakeProc.emit('close', 0);
@@ -282,7 +293,12 @@ describe('persistent per-group container', () => {
     const execSyncMock = execSync as unknown as ReturnType<typeof vi.fn>;
     execSyncMock.mockClear();
 
-    const p = runContainerAgent(testGroup, testInput, () => {}, vi.fn(async () => {}));
+    const p = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      vi.fn(async () => {}),
+    );
     await vi.advanceTimersByTimeAsync(10);
     emitOutputMarker(fakeProc, { status: 'success', result: null });
     fakeProc.emit('close', 0);
@@ -290,6 +306,13 @@ describe('persistent per-group container', () => {
 
     const cmds = execSyncMock.mock.calls.map((c) => String(c[0]));
     expect(cmds).toContain('docker rm -f nanoclaw-grp-test-group');
+    expect(
+      cmds.some(
+        (s) =>
+          s.includes(' create ') &&
+          s.includes('--name nanoclaw-grp-test-group'),
+      ),
+    ).toBe(true);
   });
 
   it('stops (never removes) the container after a successful run', async () => {
@@ -301,7 +324,12 @@ describe('persistent per-group container', () => {
     execMock.mockClear();
     execSyncMock.mockClear();
 
-    const p = runContainerAgent(testGroup, testInput, () => {}, vi.fn(async () => {}));
+    const p = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      vi.fn(async () => {}),
+    );
     await vi.advanceTimersByTimeAsync(10);
     emitOutputMarker(fakeProc, { status: 'success', result: null });
     fakeProc.emit('close', 0);
