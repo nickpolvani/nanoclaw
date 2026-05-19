@@ -532,6 +532,12 @@ export async function runContainerAgent(
             { group: group.name, containerName, err },
             'Graceful stop failed, force killing',
           );
+          // Persistent-container model: the spawned process is the
+          // `docker exec` client, not the container. The `docker stop`
+          // above is what actually reaps the in-container agent +
+          // `sleep infinity`; this SIGKILL only detaches the local exec
+          // client if `docker stop` errored. The container itself is
+          // reaped by the next task's ensureGroupContainer/cleanupOrphans.
           container.kill('SIGKILL');
         }
       });
