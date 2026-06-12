@@ -1,3 +1,8 @@
+import { execFileSync } from 'child_process';
+import { writeFileSync, unlinkSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+
 import { Api, Bot } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
@@ -10,6 +15,81 @@ import {
   OnInboundMessage,
   RegisteredGroup,
 } from '../types.js';
+
+/**
+ * Download a voice file from Telegram and transcribe it to text.
+ * Tries OpenAI Whisper API first (if OPENAI_API_KEY is set),
+ * then falls back to the local `whisper` CLI.
+ * Returns a formatted transcription string, or '[Voice message]' on failure.
+ */
+async function transcribeVoice(
+  fileId: string,
+  botToken: string,
+): Promise<string> {
+  try {
+    // 1. Resolve the file path via Telegram Bot API
+    const fileInfoRes = await fetch(
+      `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`,
+    );
+    const fileInfo = (await fileInfoRes.json()) as {
+      ok: boolean;
+      result: { file_path: string };
+    };
+    if (!fileInfo.ok) {
+      logger.warn({ fileId }, 'Telegram getFile failed');
+      return '[Voice message]';
+    }
+
+    // 2. Download the audio bytes
+    const fileRes = await fetch(
+      `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`,
+    );
+    const audioBuffer = Buffer.from(await fileRes.arrayBuffer());
+
+    // 3. Transcribe using local Qwen3-ASR model via Python script
+    const tmpOgg = join(tmpdir(), `voice_${Date.now()}.ogg`);
+    try {
+      writeFileSync(tmpOgg, audioBuffer);
+
+      // Resolve path to the transcription script (relative to this file's package root)
+      const scriptPath = join(
+        new URL('.', import.meta.url).pathname,
+        '..',
+        '..',
+        'scripts',
+        'transcribe_voice.py',
+      );
+
+      const transcription = execFileSync('python3', [scriptPath, tmpOgg], {
+        timeout: 120_000,
+        encoding: 'utf-8',
+        env: {
+          ...process.env,
+          HF_HOME: '/tmp/hf_cache',
+          NUMBA_CACHE_DIR: '/tmp/numba_cache',
+        },
+      }).trim();
+
+      if (transcription && !transcription.startsWith('[Voice message]')) {
+        logger.info({ fileId }, 'Voice transcribed via Qwen3-ASR');
+        return `🎙️ ${transcription}`;
+      }
+      return transcription || '[Voice message]';
+    } catch (err) {
+      logger.warn({ err }, 'Qwen3-ASR transcription failed');
+      return '[Voice message]';
+    } finally {
+      try {
+        unlinkSync(tmpOgg);
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch (err) {
+    logger.error({ err, fileId }, 'Voice transcription error');
+    return '[Voice message]';
+  }
+}
 
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
@@ -184,7 +264,15 @@ export class TelegramChannel implements Channel {
 
     this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
-    this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
+    this.bot.on('message:voice', async (ctx) => {
+      const fileId = ctx.message.voice?.file_id;
+      if (!fileId) {
+        storeNonText(ctx, '[Voice message]');
+        return;
+      }
+      const transcription = await transcribeVoice(fileId, this.botToken);
+      storeNonText(ctx, transcription);
+    });
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
     this.bot.on('message:document', (ctx) => {
       const name = ctx.message.document?.file_name || 'file';
