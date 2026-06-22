@@ -69,6 +69,19 @@ function createFakeProcess() {
 
 let fakeProc: ReturnType<typeof createFakeProcess>;
 
+const rt = vi.hoisted(() => ({
+  containerExists: vi.fn(() => false),
+  isContainerRunning: vi.fn(() => false),
+  containerImageLabel: vi.fn(() => 'sha256:current'),
+  imageId: vi.fn(() => 'sha256:current'),
+  startContainerCmd: (n: string) => `docker start ${n}`,
+  removeContainerCmd: (n: string) => `docker rm -f ${n}`,
+  stopContainer: (n: string) => `docker stop ${n}`,
+  readonlyMountArgs: (h: string, c: string) => ['-v', `${h}:${c}:ro`],
+  CONTAINER_RUNTIME_BIN: 'docker',
+}));
+vi.mock('./container-runtime.js', () => rt);
+
 // Mock child_process.spawn
 vi.mock('child_process', async () => {
   const actual =
@@ -82,8 +95,11 @@ vi.mock('child_process', async () => {
         return new EventEmitter();
       },
     ),
+    execSync: vi.fn(() => ''),
   };
 });
+
+import { spawn, exec } from 'child_process';
 
 import { runContainerAgent, ContainerOutput } from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
@@ -205,5 +221,125 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+});
+
+describe('persistent per-group container', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+    rt.containerExists.mockReturnValue(false);
+    rt.isContainerRunning.mockReturnValue(false);
+    rt.containerImageLabel.mockReturnValue('sha256:current');
+    rt.imageId.mockReturnValue('sha256:current');
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('uses a deterministic per-group container name and execs into it', async () => {
+    const p = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      vi.fn(async () => {}),
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    emitOutputMarker(fakeProc, { status: 'success', result: null });
+    fakeProc.emit('close', 0);
+    await p;
+
+    const spawnCalls = (spawn as unknown as ReturnType<typeof vi.fn>).mock
+      .calls;
+    const last = spawnCalls[spawnCalls.length - 1];
+    expect(last[0]).toBe('docker');
+    expect(last[1]).toEqual([
+      'exec',
+      '-i',
+      'nanoclaw-grp-test-group',
+      '/app/entrypoint.sh',
+    ]);
+  });
+
+  it('creates the container (sleep infinity + image label) when missing', async () => {
+    rt.containerExists.mockReturnValue(false);
+    const { execSync } = await import('child_process');
+    const execSyncMock = execSync as unknown as ReturnType<typeof vi.fn>;
+    execSyncMock.mockClear();
+
+    const p = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      vi.fn(async () => {}),
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    emitOutputMarker(fakeProc, { status: 'success', result: null });
+    fakeProc.emit('close', 0);
+    await p;
+
+    const createCmd = execSyncMock.mock.calls
+      .map((c) => String(c[0]))
+      .find((s) => s.includes(' create '));
+    expect(createCmd).toBeTruthy();
+    expect(createCmd).toContain('--name nanoclaw-grp-test-group');
+    expect(createCmd).toContain('--label nanoclaw.image=sha256:current');
+    expect(createCmd).toMatch(/sleep infinity$/);
+  });
+
+  it('recreates the container when the image id changed', async () => {
+    rt.containerExists.mockReturnValue(true);
+    rt.containerImageLabel.mockReturnValue('sha256:OLD');
+    rt.imageId.mockReturnValue('sha256:current');
+    const { execSync } = await import('child_process');
+    const execSyncMock = execSync as unknown as ReturnType<typeof vi.fn>;
+    execSyncMock.mockClear();
+
+    const p = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      vi.fn(async () => {}),
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    emitOutputMarker(fakeProc, { status: 'success', result: null });
+    fakeProc.emit('close', 0);
+    await p;
+
+    const cmds = execSyncMock.mock.calls.map((c) => String(c[0]));
+    expect(cmds).toContain('docker rm -f nanoclaw-grp-test-group');
+    expect(
+      cmds.some(
+        (s) =>
+          s.includes(' create ') &&
+          s.includes('--name nanoclaw-grp-test-group'),
+      ),
+    ).toBe(true);
+  });
+
+  it('stops (never removes) the container after a successful run', async () => {
+    rt.containerExists.mockReturnValue(true);
+    rt.isContainerRunning.mockReturnValue(true);
+    const { execSync } = await import('child_process');
+    const execMock = exec as unknown as ReturnType<typeof vi.fn>;
+    const execSyncMock = execSync as unknown as ReturnType<typeof vi.fn>;
+    execMock.mockClear();
+    execSyncMock.mockClear();
+
+    const p = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      vi.fn(async () => {}),
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    emitOutputMarker(fakeProc, { status: 'success', result: null });
+    fakeProc.emit('close', 0);
+    await p;
+
+    const execCmds = execMock.mock.calls.map((c) => String(c[0]));
+    const execSyncCmds = execSyncMock.mock.calls.map((c) => String(c[0]));
+    expect(execCmds).toContain('docker stop nanoclaw-grp-test-group');
+    expect([...execCmds, ...execSyncCmds]).not.toContain(
+      'docker rm -f nanoclaw-grp-test-group',
+    );
   });
 });

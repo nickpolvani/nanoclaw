@@ -3,6 +3,13 @@
 **Date:** 2026-05-16
 **Status:** Approved
 
+> **Superseded (2026-05-18):** The "installs are ephemeral — wiped when
+> the container exits (`--rm`)" property no longer holds. Containers are
+> now persistent per group; see
+> [2026-05-18-persistent-per-group-containers-design.md](./2026-05-18-persistent-per-group-containers-design.md).
+> Root-install
+> mechanism (sudo/PAM/passwd) is unchanged.
+
 ## Goal
 
 Let the NanoClaw agent container run any CLI tool and install software

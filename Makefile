@@ -11,7 +11,7 @@ LOG         := $(PROJECT_DIR)/logs/nanoclaw.log
 NODE_PROC   := nanoclaw/dist/index.js
 
 .DEFAULT_GOAL := help
-.PHONY: help start stop restart status logs attach build colima-up truncate-logs
+.PHONY: help start stop restart status logs attach build colima-up truncate-logs reset-container reset-all-containers
 
 help: ## Show this help
 	@echo "NanoClaw — available commands:"
@@ -61,3 +61,13 @@ build: colima-up ## Rebuild dist + the agent container image
 
 truncate-logs: ## Truncate the (unrotated) NanoClaw logs
 	@: > $(LOG); : > $(PROJECT_DIR)/logs/nanoclaw.error.log; echo "logs truncated"
+
+reset-container: colima-up ## Wipe one group's persistent container (GROUP=<folder>)
+	@test -n "$(GROUP)" || (echo "Usage: make reset-container GROUP=<folder>" && exit 1)
+	@name="nanoclaw-grp-$$(echo '$(GROUP)' | tr -c 'a-zA-Z0-9-\n' '-')"; \
+		echo "Removing $$name"; $(DOCKER) rm -f "$$name" 2>/dev/null || true
+
+reset-all-containers: colima-up ## Wipe ALL persistent per-group containers
+	@names="$$($(DOCKER) ps -a --filter name=nanoclaw-grp- --format '{{.Names}}')"; \
+		if [ -n "$$names" ]; then echo "$$names" | xargs -r $(DOCKER) rm -f; \
+		else echo "No persistent containers"; fi
